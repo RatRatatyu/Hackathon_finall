@@ -1,0 +1,1834 @@
+package com.example.myapplication
+
+import android.Manifest
+import android.content.Context
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.media.MediaPlayer
+import android.net.Uri
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleCoroutineScope
+import androidx.lifecycle.lifecycleScope
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetectorOptions
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.Executors
+import kotlin.math.abs
+import android.app.DatePickerDialog
+import android.widget.DatePicker
+import java.util.Calendar
+import android.app.TimePickerDialog
+import android.widget.TimePicker
+import androidx.activity.compose.rememberLauncherForActivityResult
+import coil.compose.rememberAsyncImagePainter
+import android.content.Intent
+
+
+
+// работа с SharedPreferences
+private const val PREFS_DOCUMENTS = "DocumentsPrefs"
+private const val KEY_LICENSE_URI = "license_uri"
+private const val KEY_CARGO_URI = "cargo_uri"
+private const val KEY_ID_URI = "id_uri"
+
+
+data class TripData(
+    val date: String,           // Дата поездки
+    val duration: String,       // Продолжительность поездки
+    val fatigueTimes: List<String>  //моментов обнаружения усталости
+) {
+    // преобразование в строку 
+    fun toJsonString(): String {
+        return "$date|$duration|${fatigueTimes.joinToString(",")}"
+    }
+
+    // создание объекта из строки при загрузке
+    companion object {
+        fun fromJsonString(json: String): TripData {
+            val parts = json.split("|")
+            return TripData(
+                date = parts[0],
+                duration = parts[1],
+                fatigueTimes = if (parts[2].isNotEmpty()) parts[2].split(",") else emptyList()
+            )
+        }
+    }
+}
+
+
+data class AppStrings(
+    val title: String,             // Название приложения в шапке
+    val description: String,       // Описание на главном экране
+    val startMonitoring: String,   // "Начать слежку за усталостью"
+    val tripHistory: String,       // "Посмотреть историю поездок"
+    val endTrip: String,          // "Закончить поездку"
+    val back: String,             // "Вернуться назад"
+    val attention: String,        // "ВНИМАНИЕ!" при обнаружении усталости
+    val takeBreak: String,        // "Пожалуйста, отдохните" при усталости
+    val emptyHistory: String,     // "История пуста" если поездок еще не было
+    val date: String,             // "Дата:" перед датой поездки
+    val duration: String,         // "Продолжительность:" перед временем поездки
+    val fatigueMoments: String,   // "Моменты усталости:" перед списком
+    val changeLanguage: String,   // Надпись на кнопке переключения языка
+    val loading: String,          // "Загрузка..." при запуске приложения
+    val sortByDate: String,       // "Сортировать по дате" для русского языка
+    val settings: String,         // "Настройки"
+    val language: String,         // "Язык"
+    val russian: String,          // "Русский"
+    val kazakh: String,          // "Казахский"
+    val foodInterval: String,     // "Интервал предупреждений о еде"
+    val sleepInterval: String,    // "Интервал предупреждений о сне"
+    val minutes: String,          // "минут"
+    val seconds: String,          // "секунд"
+    val enableFoodNotifications: String,    // "Включить предупреждения о еде"
+    val enableSleepNotifications: String,    // "Включить предупреждения о сне"
+    val enabled: String,                     // "Включено"
+    val disabled: String,                     // "Отключено"
+    val documents: String // ← добавлено поле для "Документы"
+)
+
+
+class MainActivity : ComponentActivity() {
+    // Переменные для работы со звуком и отслеживания состояния
+    private var mediaPlayer: MediaPlayer? = null
+    private var isFatigueDetected = false
+    private var tripStartTime: Long = 0
+    private var fatigueTime: Long = 0
+    private val tripHistory = mutableListOf<TripData>()
+    private var currentFatigueTimes = mutableListOf<String>()
+    private var isLoading by mutableStateOf(true)
+    private lateinit var sharedPreferences: SharedPreferences
+    private var foodInterval by mutableStateOf(10) // Интервал предупреждений о еде в минутах
+    private var sleepInterval by mutableStateOf(60) // Интервал предупреждений о сне в минутах
+    private var foodNotificationsEnabled by mutableStateOf(true)
+    private var sleepNotificationsEnabled by mutableStateOf(true)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Поддержание экрана включенным 
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // для хранения данных
+        sharedPreferences = getSharedPreferences("TripHistory", Context.MODE_PRIVATE)
+        
+        // Загрузка сохраненных данных
+        loadTripHistory()
+        loadSettings()
+
+        // Настройка звукового сигнала для предупреждения 
+        mediaPlayer = MediaPlayer.create(this, R.raw.alert_sound).apply {
+            setOnCompletionListener {
+                isFatigueDetected = false
+            }
+        }
+
+        // Запрос разрешения на использование камеры
+        val requestPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            if (!granted) {
+                Toast.makeText(this, "Без камеры никак :(", Toast.LENGTH_SHORT).show()
+            }
+
+            lifecycleScope.launch {
+                delay(2000)
+                isLoading = false
+            }
+        }
+
+        // Проверка на разрешение
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED) {
+            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        } else {
+
+            lifecycleScope.launch {
+                delay(2000)
+                isLoading = false
+            }
+        }
+
+        // интерфейс приложения
+        setContent {
+            var showAlert by remember { mutableStateOf(false) }
+            var showCamera by remember { mutableStateOf(false) }
+            var showHistory by remember { mutableStateOf(false) }
+            var showSettings by remember { mutableStateOf(false) }
+            var showDocuments by remember { mutableStateOf(false) }
+            var tripTime by remember { mutableStateOf("00:00:00") }
+            var fatigueTimeText by remember { mutableStateOf("") }
+            var isKazakh by remember { mutableStateOf(false) }
+
+            // кнопки "Назад"
+            BackHandler(enabled = showHistory || showSettings || showDocuments) {
+                if (showHistory) showHistory = false
+                if (showSettings) showSettings = false
+                if (showDocuments) showDocuments = false
+            }
+
+            //  тексты на нужном языке
+            val strings = if (isKazakh) kazakhStrings else russianStrings
+
+            // Следим за временем поездки
+            LaunchedEffect(showCamera) {
+                if (showCamera) {
+                    tripStartTime = System.currentTimeMillis()
+                    currentFatigueTimes.clear()
+                    while (showCamera) {
+                        val currentTime = System.currentTimeMillis()
+                        val elapsedTime = currentTime - tripStartTime
+                        val hours = (elapsedTime / 3600000).toInt()
+                        val minutes = ((elapsedTime % 3600000) / 60000).toInt()
+                        val seconds = ((elapsedTime % 60000) / 1000).toInt()
+                        tripTime = String.format("%02d:%02d:%02d", hours, minutes, seconds)
+                        delay(1000)
+                    }
+                }
+            }
+
+            // Настраиваем звуковой сигнал
+            LaunchedEffect(mediaPlayer) {
+                mediaPlayer?.setOnCompletionListener {
+                    isFatigueDetected = false
+                    showAlert = false
+                }
+            }
+
+            // Меняем язык приложения при нажатии кнопку
+            LaunchedEffect(isKazakh) {
+                setLocale(if (isKazakh) "kk" else "ru")
+            }
+
+            MaterialTheme {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (isLoading) {
+                        LoadingScreen(strings = strings)
+                    } else if (showCamera) {
+                        CameraPreview(
+                            onFatigueDetected = { detected ->
+                                if (detected && !isFatigueDetected) {
+                                    isFatigueDetected = true
+                                    showAlert = true
+                                    fatigueTime = System.currentTimeMillis()
+                                    val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                                    val timeText = sdf.format(Date(fatigueTime))
+                                    fatigueTimeText = "Усталость обнаружена в: $timeText"
+                                    currentFatigueTimes.add(timeText)
+                                    mediaPlayer?.start()
+                                }
+                            },
+                            lifecycleScope = lifecycleScope,
+                            tripTime = tripTime,
+                            strings = strings,
+                            isKazakh = isKazakh,
+                            foodInterval = foodInterval,
+                            sleepInterval = sleepInterval,
+                            foodNotificationsEnabled = foodNotificationsEnabled,
+                            sleepNotificationsEnabled = sleepNotificationsEnabled
+                        )
+
+                        // Таймер поездки
+                        Card(
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .align(Alignment.TopStart),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color.White.copy(alpha = 0.9f)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_timer),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Text(
+                                    text = tripTime,
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontSize = 20.sp,
+                                    modifier = Modifier.padding(start = 8.dp)
+                                )
+                            }
+                        }
+
+                        // Кнопка завершения поездки
+                        Button(
+                            onClick = {
+                                val sdf = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+                                val date = sdf.format(Date())
+                                tripHistory.add(TripData(date, tripTime, currentFatigueTimes))
+                                saveTripHistory()
+                                showCamera = false
+                                stopAlertSound()
+                            },
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .align(Alignment.BottomEnd),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF212020),
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Text(strings.endTrip, fontSize = 18.sp)
+                        }
+
+                        if (showAlert) {
+                            AlertDialog(
+                                onDismissRequest = { showAlert = false },
+                                title = {
+                                    Text(
+                                        strings.attention,
+                                        fontSize = 32.sp,
+                                        color = Color(0xFF212020),
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                },
+                                text = {
+                                    Text(
+                                        strings.takeBreak,
+                                        fontSize = 24.sp,
+                                        color = Color(0xFF212020),
+                                        textAlign = TextAlign.Center
+                                    )
+                                },
+                                confirmButton = {},
+                                containerColor = Color(0xFF75688F).copy(alpha = 0.9f),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    } else if (showHistory) {
+                        HistoryScreen(
+                            tripHistory = tripHistory,
+                            onBack = { showHistory = false },
+                            strings = strings
+                        )
+                    } else if (showSettings) {
+                        SettingsScreen(
+                            isKazakh = isKazakh,
+                            onLanguageChange = { newIsKazakh -> 
+                                isKazakh = newIsKazakh
+                                setLocale(if (newIsKazakh) "kk" else "ru")
+                            },
+                            onBack = { showSettings = false },
+                            strings = strings,
+                            foodInterval = foodInterval,
+                            sleepInterval = sleepInterval,
+                            foodNotificationsEnabled = foodNotificationsEnabled,
+                            sleepNotificationsEnabled = sleepNotificationsEnabled,
+                            onFoodIntervalChange = { newInterval ->
+                                foodInterval = newInterval
+                                saveSettings()
+                            },
+                            onSleepIntervalChange = { newInterval ->
+                                sleepInterval = newInterval
+                                saveSettings()
+                            },
+                            onFoodNotificationsToggle = { newEnabled ->
+                                foodNotificationsEnabled = newEnabled
+                                saveSettings()
+                            },
+                            onSleepNotificationsToggle = { newEnabled ->
+                                sleepNotificationsEnabled = newEnabled
+                                saveSettings()
+                            }
+                        )
+                    } else if (showDocuments) {
+                        DocumentsScreen(
+                            onBack = { showDocuments = false },
+                            strings = strings
+                        )
+                    } else {
+                        EntryScreen(
+                            onStartCamera = { showCamera = true },
+                            onShowHistory = { showHistory = true },
+                            onShowSettings = { showSettings = true },
+                            onShowDocuments = { showDocuments = true },
+                            strings = strings
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    //  история поездок
+    private fun saveTripHistory() {
+        val editor = sharedPreferences.edit()
+        val historyJson = tripHistory.joinToString(";") { it.toJsonString() }
+        editor.putString("history", historyJson)
+        editor.apply()
+    }
+
+    private fun loadTripHistory() {
+        val historyJson = sharedPreferences.getString("history", "")
+        if (!historyJson.isNullOrEmpty()) {
+            tripHistory.clear()
+            tripHistory.addAll(historyJson.split(";").map { TripData.fromJsonString(it) })
+        }
+    }
+
+    // работа с настройками
+    private fun saveSettings() {
+        val editor = sharedPreferences.edit()
+        editor.putInt("foodInterval", foodInterval)
+        editor.putInt("sleepInterval", sleepInterval)
+        editor.putBoolean("foodNotificationsEnabled", foodNotificationsEnabled)
+        editor.putBoolean("sleepNotificationsEnabled", sleepNotificationsEnabled)
+        editor.apply()
+    }
+
+    private fun loadSettings() {
+        foodInterval = sharedPreferences.getInt("foodInterval", 10)
+        sleepInterval = sharedPreferences.getInt("sleepInterval", 60)
+        foodNotificationsEnabled = sharedPreferences.getBoolean("foodNotificationsEnabled", true)
+        sleepNotificationsEnabled = sharedPreferences.getBoolean("sleepNotificationsEnabled", true)
+    }
+
+
+    override fun onPause() {
+        super.onPause()
+        stopAlertSound()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        stopAlertSound()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopAlertSound()
+        mediaPlayer?.release()
+        mediaPlayer = null
+    }
+
+    // остановка звукового сигнала
+    private fun stopAlertSound() {
+        mediaPlayer?.let {
+            if (it.isPlaying) {
+                it.stop()
+                it.prepare()
+            }
+            isFatigueDetected = false
+        }
+    }
+
+    //  строки на русском языке
+    private val russianStrings = AppStrings(
+        title = "LONG ROAD",
+        description = "Это приложение поможет вам следить за уровнем усталости во время поездки",
+        startMonitoring = "Начать мониторинг",
+        tripHistory = "История поездок",
+        endTrip = "Завершить поездку",
+        back = "Назад",
+        attention = "ВНИМАНИЕ!",
+        takeBreak = "Пожалуйста, сделайте перерыв.",
+        emptyHistory = "История поездок пуста",
+        date = "Дата:",
+        duration = "Продолжительность:",
+        fatigueMoments = "Моменты усталости:",
+        changeLanguage = "Қаз/Рус",
+        loading = "Загрузка...",
+        sortByDate = "Сортировать по дате",
+        settings = "Настройки",
+        language = "Язык",
+        russian = "Русский",
+        kazakh = "Казахский",
+        foodInterval = "Интервал предупреждений о еде",
+        sleepInterval = "Интервал предупреждений о сне",
+        minutes = "минут",
+        seconds = "секунд",
+        enableFoodNotifications = "Включить предупреждения о еде",
+        enableSleepNotifications = "Включить предупреждения о сне",
+        enabled = "Включено",
+        disabled = "Отключено",
+        documents = "Документы"
+    )
+
+    // строки на казахском языке
+    private val kazakhStrings = AppStrings(
+        title = "LONG ROAD",
+        description = "Бұл қосымша жүріс кезінде шаршау деңгейін бақылауға көмектеседі",
+        startMonitoring = "Бақылауды бастау",
+        tripHistory = "Жүріс тарихы",
+        endTrip = "Жүрісті аяқтау",
+        back = "Артқа",
+        attention = "НАЗАР!",
+        takeBreak = "Демалуға уақыт алыңыз.",
+        emptyHistory = "Жүріс тарихы бос",
+        date = "Күні:",
+        duration = "Ұзақтығы:",
+        fatigueMoments = "Шаршау сәттері:",
+        changeLanguage = "Қаз/Рус",
+        loading = "Жүктеу...",
+        sortByDate = "Күні бойынша сұрыптау",
+        settings = "Баптаулар",
+        language = "Тіл",
+        russian = "Орыс",
+        kazakh = "Қазақ",
+        foodInterval = "Тамақтану туралы ескертулер аралығы",
+        sleepInterval = "Ұйқы туралы ескертулер аралығы",
+        minutes = "минут",
+        seconds = "секунд",
+        enableFoodNotifications = "Тамақтану туралы ескертулерді қосу",
+        enableSleepNotifications = "Ұйқы туралы ескертулерді қосу",
+        enabled = "Қосылған",
+        disabled = "Өшірілген",
+        documents = "Құжаттар"
+    )
+
+    // Функция для изменения языка приложения
+    private fun setLocale(language: String) {
+        val locale = Locale(language)
+        Locale.setDefault(locale)
+        val config = Configuration(resources.configuration)
+        config.setLocale(locale)
+        createConfigurationContext(config)
+        resources.updateConfiguration(config, resources.displayMetrics)
+    }
+}
+
+// Компонент начального экрана приложения
+@Composable
+fun EntryScreen(
+    onStartCamera: () -> Unit,
+    onShowHistory: () -> Unit,
+    onShowSettings: () -> Unit,
+    onShowDocuments: () -> Unit,
+    strings: AppStrings
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF75688F))
+    ) {
+        // Логотип в верхнем левом углу
+        Image(
+            painter = painterResource(id = R.drawable.ic_launcher),
+            contentDescription = "Logo",
+            modifier = Modifier
+                .size(190.dp)
+                .padding(16.dp)
+                .align(Alignment.TopStart)
+        )
+
+        // Кнопка настроек
+        Button(
+            onClick = onShowSettings,
+            modifier = Modifier
+                .padding(16.dp)
+                .align(Alignment.TopEnd),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF212020),
+                contentColor = Color.White
+            )
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_settings),
+                    contentDescription = null,
+                    tint = Color.White
+                )
+                Text(strings.settings, fontSize = 16.sp)
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = strings.title,
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    color = Color(0xFF212020),
+                    fontSize = 48.sp
+                ),
+                modifier = Modifier.padding(bottom = 32.dp)
+            )
+            
+            Text(
+                text = strings.description,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    color = Color(0xFF212020),
+                    fontSize = 18.sp
+                ),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 48.dp)
+            )
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Button(
+                    onClick = onStartCamera,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF212020),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_camera),
+                            contentDescription = null,
+                            tint = Color.White
+                        )
+                        Text(strings.startMonitoring, fontSize = 18.sp)
+                    }
+                }
+
+                Button(
+                    onClick = onShowHistory,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF212020),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_history),
+                            contentDescription = null,
+                            tint = Color.White
+                        )
+                        Text(strings.tripHistory, fontSize = 18.sp)
+                    }
+                }
+
+                Button(
+                    onClick = onShowDocuments,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF212020),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_document),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(strings.documents, fontSize = 18.sp)
+                    }
+                }
+            }
+        }
+
+        // Анимированная картинка внизу
+        val infiniteTransition = rememberInfiniteTransition(label = "infinite")
+        val offsetX by infiniteTransition.animateFloat(
+            initialValue = 1.2f,  // Начинаем за правым краем экрана
+            targetValue = -1.2f,  // Заканчиваем за левым краем экрана
+            animationSpec = infiniteRepeatable(
+                animation = tween(16000, easing = LinearEasing),  
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "offset"
+        )
+
+        Image(
+            painter = painterResource(id = R.drawable.fura),
+            contentDescription = "Animated Image",
+            modifier = Modifier
+                .size(260.dp)  
+                .offset(
+                    x = (LocalConfiguration.current.screenWidthDp.dp * offsetX),
+                    y = 90.dp  
+                )
+                .align(Alignment.BottomCenter)
+        )
+    }
+}
+
+// Компонент экрана истории поездок
+@Composable
+fun HistoryScreen(
+    tripHistory: List<TripData>,
+    onBack: () -> Unit,
+    strings: AppStrings
+) {
+    var sortAscending by remember { mutableStateOf(true) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var selectedDate by remember { mutableStateOf<Date?>(null) }
+    val context = LocalContext.current
+    
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF75688F))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp)
+        ) {
+            // Заголовок
+            Text(
+                text = strings.tripHistory,
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    color = Color(0xFF212020),
+                    fontSize = 48.sp
+                ),
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            
+            // Кнопка сортировки и выбора даты
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { showDatePicker = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF212020),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_calendar),
+                            contentDescription = null,
+                            tint = Color.White
+                        )
+                        Text(
+                            text = if (selectedDate != null) {
+                                val sdf = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+                                strings.sortByDate + ": " + sdf.format(selectedDate)
+                            } else {
+                                strings.sortByDate
+                            },
+                            fontSize = 18.sp
+                        )
+                    }
+                }
+
+                if (selectedDate != null) {
+                    Button(
+                        onClick = { selectedDate = null },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF212020),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_clear),
+                            contentDescription = null,
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
+
+            if (showDatePicker) {
+                val calendar = Calendar.getInstance()
+                val year = calendar.get(Calendar.YEAR)
+                val month = calendar.get(Calendar.MONTH)
+                val day = calendar.get(Calendar.DAY_OF_MONTH)
+
+                val datePickerDialog = DatePickerDialog(
+                    context,
+                    { _: DatePicker, year: Int, month: Int, day: Int ->
+                        val calendar = Calendar.getInstance()
+                        calendar.set(year, month, day)
+                        selectedDate = calendar.time
+                        showDatePicker = false
+                    },
+                    year,
+                    month,
+                    day
+                )
+                
+                datePickerDialog.show()
+            }
+
+            if (tripHistory.isEmpty()) {
+                Text(
+                    text = strings.emptyHistory,
+                    style = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                    modifier = Modifier.padding(16.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(
+                        tripHistory
+                            .filter { trip ->
+                                if (selectedDate == null) true
+                                else {
+                                    val sdf = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+                                    val tripDate = sdf.parse(trip.date)
+                                    val calendarTrip = Calendar.getInstance().apply {
+                                        time = tripDate ?: return@filter false
+                                    }
+                                    val calendarSelected = Calendar.getInstance().apply {
+                                        time = selectedDate ?: return@filter false
+                                    }
+                                    
+                                    calendarTrip.get(Calendar.YEAR) == calendarSelected.get(Calendar.YEAR) &&
+                                    calendarTrip.get(Calendar.MONTH) == calendarSelected.get(Calendar.MONTH) &&
+                                    calendarTrip.get(Calendar.DAY_OF_MONTH) == calendarSelected.get(Calendar.DAY_OF_MONTH)
+                                }
+                            }
+                            .sortedWith(
+                                compareBy<TripData> { trip ->
+                                    val sdf = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+                                    val tripDate = sdf.parse(trip.date)
+                                    val calendarTrip = Calendar.getInstance().apply {
+                                        time = tripDate ?: return@compareBy 0L
+                                    }
+                                    val calendarToday = Calendar.getInstance()
+                                    
+                                   
+                                    if (calendarTrip.get(Calendar.YEAR) == calendarToday.get(Calendar.YEAR) &&
+                                        calendarTrip.get(Calendar.MONTH) == calendarToday.get(Calendar.MONTH) &&
+                                        calendarTrip.get(Calendar.DAY_OF_MONTH) == calendarToday.get(Calendar.DAY_OF_MONTH)) {
+                                        0L
+                                    } else {
+                                        1L
+                                    }
+                                }.thenBy { trip ->
+                                    val sdf = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+                                    sdf.parse(trip.date)?.time ?: 0L
+                                }.let { comparator -> 
+                                    if (sortAscending) comparator else comparator.reversed() 
+                                }
+                            )
+                    ) { trip ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFF212020)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Text(
+                                    text = "${strings.date} ${trip.date}",
+                                    style = MaterialTheme.typography.titleMedium.copy(color = Color.White)
+                                )
+                                Text(
+                                    text = "${strings.duration} ${trip.duration}",
+                                    style = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+                                if (trip.fatigueTimes.isNotEmpty()) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(bottom = 8.dp)
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_warning),
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = strings.fatigueMoments,
+                                            style = MaterialTheme.typography.titleSmall.copy(color = Color.White),
+                                            modifier = Modifier.padding(start = 8.dp)
+                                        )
+                                    }
+                                    trip.fatigueTimes.forEach { time ->
+                                        Text(
+                                            text = "• $time",
+                                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                                            modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Кнопка "Назад" внизу экрана
+            Button(
+                onClick = onBack,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF212020),
+                    contentColor = Color.White
+                )
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_back),
+                        contentDescription = null,
+                        tint = Color.White
+                    )
+                    Text(strings.back, fontSize = 18.sp)
+                }
+            }
+        }
+    }
+}
+
+// Компонент для отслеживания усталости через камеру
+@OptIn(ExperimentalGetImage::class)
+@Composable
+fun CameraPreview(
+    onFatigueDetected: (Boolean) -> Unit,
+    lifecycleScope: LifecycleCoroutineScope,
+    tripTime: String,
+    strings: AppStrings,
+    isKazakh: Boolean,
+    foodInterval: Int,
+    sleepInterval: Int,
+    foodNotificationsEnabled: Boolean,
+    sleepNotificationsEnabled: Boolean
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val executor = remember { Executors.newSingleThreadExecutor() }
+    val previewView = remember { PreviewView(context) }
+  
+    var showEatWarning by remember { mutableStateOf(false) }
+    var showSleepWarning by remember { mutableStateOf(false) }
+    var lastEatWarning by remember { mutableStateOf(System.currentTimeMillis()) }
+    var lastSleepWarning by remember { mutableStateOf(System.currentTimeMillis()) }
+
+    // Таймер для предупреждения о еде
+    LaunchedEffect(Unit) {
+        while (true) {
+            val currentTime = System.currentTimeMillis()
+            if (foodNotificationsEnabled && currentTime - lastEatWarning >= foodInterval * 1000L) {
+                showEatWarning = true
+                delay(3000)
+                showEatWarning = false
+                lastEatWarning = currentTime
+            }
+            delay(1000)
+        }
+    }
+
+    // Таймер для предупреждения о сне
+    LaunchedEffect(Unit) {
+        while (true) {
+            val currentTime = System.currentTimeMillis()
+            if (sleepNotificationsEnabled && currentTime - lastSleepWarning >= sleepInterval * 1000L) {
+                showSleepWarning = true
+                delay(3000)
+                showSleepWarning = false
+                lastSleepWarning = currentTime
+            }
+            delay(1000)
+        }
+    }
+
+    var lastMinuteStart by remember { mutableStateOf(System.currentTimeMillis()) }
+    var blinkCount by remember { mutableStateOf(0) }
+    var lastBlink by remember { mutableStateOf(0L) }
+    var lastNod by remember { mutableStateOf(0L) }
+    var consecutiveBlinkCount by remember { mutableStateOf(0) }
+    var lastFatigueDetection by remember { mutableStateOf(0L) }
+    var eyeClosedDuration by remember { mutableStateOf(0L) }
+    var headTiltCount by remember { mutableStateOf(0) }
+    var lastHeadTilt by remember { mutableStateOf(0L) }
+    
+    
+    var blinkStartTime by remember { mutableStateOf(0L) }
+    var blinkFrequency by remember { mutableStateOf(0) }
+    var longBlinksCount by remember { mutableStateOf(0) }
+    var emptyBlinksCount by remember { mutableStateOf(0) }
+    var lastGazeDirection by remember { mutableStateOf(0f) }
+
+    // Детектор лиц
+    val detector = remember {
+        val options = FaceDetectorOptions.Builder()
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .build()
+        FaceDetection.getClient(options)
+    }
+
+    DisposableEffect(Unit) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        val cameraProvider = cameraProviderFuture.get()
+
+        val preview = Preview.Builder().build().apply {
+            setSurfaceProvider(previewView.surfaceProvider)
+        }
+
+        val analysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build().apply {
+                setAnalyzer(executor) { imageProxy ->
+                    val mediaImage = imageProxy.image ?: return@setAnalyzer imageProxy.close()
+                    val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                    val now = System.currentTimeMillis()
+
+                    // Сброс счетчиков каждую минуту
+                    if (now - lastMinuteStart > 60000) {
+                        blinkFrequency = 0
+                        lastMinuteStart = now
+                    }
+
+                    detector.process(image)
+                        .addOnSuccessListener { faces ->
+                            faces.firstOrNull()?.let { face ->
+                                // Проверка моргания
+                                val leftEyeOpen = face.leftEyeOpenProbability ?: 1f
+                                val rightEyeOpen = face.rightEyeOpenProbability ?: 1f
+                                val bothEyesClosed = leftEyeOpen < 0.3 && rightEyeOpen < 0.3
+                                val currentGazeDirection = face.headEulerAngleY
+
+                                if (bothEyesClosed) {
+                                    if (eyeClosedDuration == 0L) {
+                                        eyeClosedDuration = now
+                                        blinkStartTime = now
+                                    }
+                                    
+                                    // Определение длительного моргания
+                                    if (now - eyeClosedDuration > 1000) {
+                                        longBlinksCount++
+                                        if (longBlinksCount > 2) {
+                                            onFatigueDetected(true)
+                                        }
+                                    }
+                                } else {
+                                    if (eyeClosedDuration > 0) {
+                                        // Подсчет частоты морганий
+                                        blinkFrequency++
+                                        blinkCount++
+                                        
+                                        // Определение пустого моргания
+                                        if (abs(currentGazeDirection - lastGazeDirection) < 5) {
+                                            emptyBlinksCount++
+                                            if (emptyBlinksCount > 3) {
+                                                onFatigueDetected(true)
+                                            }
+                                        } else {
+                                            emptyBlinksCount = 0
+                                        }
+                                        
+                                        // Проверка частоты морганий
+                                        if (blinkFrequency > 30) {
+                                            onFatigueDetected(true)
+                                        }
+                                    }
+                                    eyeClosedDuration = 0L
+                                }
+
+                                // Проверка последовательных морганий
+                                if (bothEyesClosed) {
+                                    if (now - lastBlink < 500) {
+                                        consecutiveBlinkCount++
+                                        if (consecutiveBlinkCount > 5) {
+                                            onFatigueDetected(true)
+                                        }
+                                    } else {
+                                        consecutiveBlinkCount = 1
+                                    }
+                                    lastBlink = now
+                                }
+
+                                lastGazeDirection = currentGazeDirection
+
+                                // Проверка кивков головой
+                                if (abs(face.headEulerAngleX) > 20) {
+                                    if (now - lastNod < 2000) {
+                                        onFatigueDetected(true)
+                                    }
+                                    lastNod = now
+                                }
+
+                                // Проверка наклона головы
+                                if (abs(face.headEulerAngleZ) > 15) {
+                                    if (now - lastHeadTilt < 3000) {
+                                        headTiltCount++
+                                        if (headTiltCount > 2) {
+                                            onFatigueDetected(true)
+                                        }
+                                    } else {
+                                        headTiltCount = 1
+                                    }
+                                    lastHeadTilt = now
+                                }
+
+                                // Проверка частоты обнаружения усталости
+                                if (now - lastFatigueDetection < 30000) {
+                                    onFatigueDetected(true)
+                                }
+                            }
+                            imageProxy.close()
+                        }
+                        .addOnFailureListener {
+                            it.printStackTrace()
+                            imageProxy.close()
+                        }
+                }
+            }
+
+        try {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_FRONT_CAMERA,
+                preview,
+                analysis
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        onDispose {
+            executor.shutdown()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+        
+        // Таймер поездки
+        Card(
+            modifier = Modifier
+                .padding(16.dp)
+                .align(Alignment.TopStart),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White.copy(alpha = 0.9f)
+            )
+        ) {
+            Row(
+                modifier = Modifier.padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_timer),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    text = tripTime,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 20.sp,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
+
+        // Предупреждение о еде
+        if (showEatWarning) {
+            AlertDialog(
+                onDismissRequest = { showEatWarning = false },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_warning),
+                            contentDescription = null,
+                            tint = Color(0xFF4CAF50),
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Text(
+                            if (isKazakh) "Тамақтану уақыты!" else "Время перекусить!",
+                            fontSize = 24.sp,
+                            color = Color(0xFF4CAF50),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                },
+                text = {
+                    Text(
+                        if (isKazakh) 
+                            "Тамақтану ұсынылады" 
+                        else 
+                            "Рекомендуется перекусить",
+                        fontSize = 18.sp,
+                        color = Color(0xFF4CAF50),
+                        textAlign = TextAlign.Center
+                    )
+                },
+                confirmButton = {},
+                containerColor = Color(0xFFE8F5E9).copy(alpha = 0.9f),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // Предупреждение о сне
+        if (showSleepWarning) {
+            AlertDialog(
+                onDismissRequest = { showSleepWarning = false },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_warning),
+                            contentDescription = null,
+                            tint = Color(0xFF2196F3),
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Text(
+                            if (isKazakh) "Демалыс уақыты!" else "Время отдохнуть!",
+                            fontSize = 24.sp,
+                            color = Color(0xFF2196F3),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                },
+                text = {
+                    Text(
+                        if (isKazakh) 
+                            "Ұйықтау ұсынылады" 
+                        else 
+                            "Рекомендуется поспать",
+                        fontSize = 18.sp,
+                        color = Color(0xFF2196F3),
+                        textAlign = TextAlign.Center
+                    )
+                },
+                confirmButton = {},
+                containerColor = Color(0xFFE3F2FD).copy(alpha = 0.9f),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+// Компонент экрана загрузки
+@Composable
+fun LoadingScreen(strings: AppStrings) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF75688F)),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.ic_launcher),
+            contentDescription = "Logo",
+            modifier = Modifier
+                .size(200.dp)
+        )
+    }
+}
+
+// Компонент экрана настроек
+@Composable
+fun SettingsScreen(
+    isKazakh: Boolean,
+    onLanguageChange: (Boolean) -> Unit,
+    onBack: () -> Unit,
+    strings: AppStrings,
+    foodInterval: Int,
+    sleepInterval: Int,
+    foodNotificationsEnabled: Boolean,
+    sleepNotificationsEnabled: Boolean,
+    onFoodIntervalChange: (Int) -> Unit,
+    onSleepIntervalChange: (Int) -> Unit,
+    onFoodNotificationsToggle: (Boolean) -> Unit,
+    onSleepNotificationsToggle: (Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    var showFoodTimePicker by remember { mutableStateOf(false) }
+    var showSleepTimePicker by remember { mutableStateOf(false) }
+
+    if (showFoodTimePicker) {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.HOUR_OF_DAY, foodInterval / 60)
+        calendar.set(Calendar.MINUTE, foodInterval % 60)
+
+        TimePickerDialog(
+            context,
+            { _: TimePicker, hour: Int, minute: Int ->
+                onFoodIntervalChange(hour * 60 + minute)
+                showFoodTimePicker = false
+            },
+            calendar.get(Calendar.HOUR_OF_DAY),
+            calendar.get(Calendar.MINUTE),
+            true
+        ).show()
+    }
+
+    if (showSleepTimePicker) {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.HOUR_OF_DAY, sleepInterval / 60)
+        calendar.set(Calendar.MINUTE, sleepInterval % 60)
+
+        TimePickerDialog(
+            context,
+            { _: TimePicker, hour: Int, minute: Int ->
+                onSleepIntervalChange(hour * 60 + minute)
+                showSleepTimePicker = false
+            },
+            calendar.get(Calendar.HOUR_OF_DAY),
+            calendar.get(Calendar.MINUTE),
+            true
+        ).show()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF75688F))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp)
+        ) {
+            // Заголовок
+            Text(
+                text = strings.settings,
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    color = Color(0xFF212020),
+                    fontSize = 48.sp
+                ),
+                modifier = Modifier.padding(bottom = 32.dp)
+            )
+
+            // Настройка языка
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF212020)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = strings.language,
+                        style = MaterialTheme.typography.titleMedium.copy(color = Color.White),
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { onLanguageChange(false) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (!isKazakh) Color(0xFF4CAF50) else Color(0xFF212020),
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Text(strings.russian)
+                        }
+                        
+                        Button(
+                            onClick = { onLanguageChange(true) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isKazakh) Color(0xFF4CAF50) else Color(0xFF212020),
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Text(strings.kazakh)
+                        }
+                    }
+                }
+            }
+
+            // Настройка интервала предупреждений о еде
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF212020)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = strings.foodInterval,
+                        style = MaterialTheme.typography.titleMedium.copy(color = Color.White),
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
+                    Button(
+                        onClick = { showFoodTimePicker = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF4CAF50),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_timer),
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Text(
+                                text = "${foodInterval / 60}:${String.format("%02d", foodInterval % 60)}",
+                                style = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+
+                    TextButton(
+                        onClick = { onFoodNotificationsToggle(!foodNotificationsEnabled) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = if (foodNotificationsEnabled) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                        )
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                painter = painterResource(id = if (foodNotificationsEnabled) R.drawable.ic_notifications_on else R.drawable.ic_notifications_off),
+                                contentDescription = null,
+                                tint = if (foodNotificationsEnabled) Color(0xFF4CAF50) else Color(0xFF9E9E9E),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = if (foodNotificationsEnabled) strings.enabled else strings.disabled,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = if (foodNotificationsEnabled) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                                ),
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Настройка интервала предупреждений о сне
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF212020)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = strings.sleepInterval,
+                        style = MaterialTheme.typography.titleMedium.copy(color = Color.White),
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
+                    Button(
+                        onClick = { showSleepTimePicker = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF4CAF50),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_timer),
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Text(
+                                text = "${sleepInterval / 60}:${String.format("%02d", sleepInterval % 60)}",
+                                style = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+
+                    TextButton(
+                        onClick = { onSleepNotificationsToggle(!sleepNotificationsEnabled) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = if (sleepNotificationsEnabled) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                        )
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                painter = painterResource(id = if (sleepNotificationsEnabled) R.drawable.ic_notifications_on else R.drawable.ic_notifications_off),
+                                contentDescription = null,
+                                tint = if (sleepNotificationsEnabled) Color(0xFF4CAF50) else Color(0xFF9E9E9E),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = if (sleepNotificationsEnabled) strings.enabled else strings.disabled,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = if (sleepNotificationsEnabled) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                                ),
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Кнопка "Назад" внизу экрана
+        Button(
+            onClick = onBack,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .align(Alignment.BottomCenter),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF212020),
+                contentColor = Color.White
+            )
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_back),
+                    contentDescription = null,
+                    tint = Color.White
+                )
+                Text(strings.back, fontSize = 18.sp)
+            }
+        }
+    }
+}
+
+// Компонент для отображения секции документа
+@Composable
+fun DocumentSection(
+    title: String,
+    uri: Uri?,
+    onAddClick: () -> Unit,
+    onViewClick: (() -> Unit)? = null,
+    onDeleteClick: (() -> Unit)? = null
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF212020)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium.copy(color = Color.White),
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onAddClick) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_add),
+                        contentDescription = "Добавить",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                if (uri != null) {
+                    IconButton(onClick = { onViewClick?.invoke() }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_visibility), // иконка "глаз"
+                            contentDescription = "Просмотр",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    IconButton(onClick = { onDeleteClick?.invoke() }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_delete), // иконка "корзина"
+                            contentDescription = "Удалить",
+                            tint = Color.Red,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
+            if (uri != null) {
+                if (uri.toString().endsWith(".jpg") || uri.toString().endsWith(".jpeg") || uri.toString().endsWith(".png")) {
+                    Image(
+                        painter = rememberAsyncImagePainter(uri),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .padding(top = 8.dp)
+                    )
+                } else {
+                    Text(
+                        text = uri.lastPathSegment ?: uri.toString(),
+                        color = Color.White,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+// Компонент экрана документов
+@Composable
+fun DocumentsScreen(
+    onBack: () -> Unit,
+    strings: AppStrings
+) {
+    val context = LocalContext.current
+
+  
+    val docsPrefs = context.getSharedPreferences(PREFS_DOCUMENTS, Context.MODE_PRIVATE)
+
+    var licenseUri by remember { mutableStateOf<Uri?>(null) }
+    var cargoUri by remember { mutableStateOf<Uri?>(null) }
+    var idUri by remember { mutableStateOf<Uri?>(null) }
+
+ 
+    LaunchedEffect(Unit) {
+        docsPrefs.getString(KEY_LICENSE_URI, null)?.let { licenseUri = Uri.parse(it) }
+        docsPrefs.getString(KEY_CARGO_URI, null)?.let { cargoUri = Uri.parse(it) }
+        docsPrefs.getString(KEY_ID_URI, null)?.let { idUri = Uri.parse(it) }
+    }
+
+
+    val licensePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        licenseUri = uri
+        uri?.let { docsPrefs.edit().putString(KEY_LICENSE_URI, it.toString()).apply() }
+    }
+    val cargoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        cargoUri = uri
+        uri?.let { docsPrefs.edit().putString(KEY_CARGO_URI, it.toString()).apply() }
+    }
+    val idPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        idUri = uri
+        uri?.let { docsPrefs.edit().putString(KEY_ID_URI, it.toString()).apply() }
+    }
+
+    // Функция для просмотра документа
+    fun viewDocument(uri: Uri?) {
+        uri ?: return
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, context.contentResolver.getType(uri) ?: "*/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
+    }
+
+    // Функция для удаления документа
+    fun deleteDocument(key: String, setUri: (Uri?) -> Unit) {
+        docsPrefs.edit().remove(key).apply()
+        setUri(null)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF75688F))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Top
+        ) {
+            Text(
+                text = strings.documents,
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    color = Color(0xFF212020),
+                    fontSize = 36.sp
+                ),
+                modifier = Modifier.padding(bottom = 32.dp)
+            )
+
+      
+            DocumentSection(
+                title = if (strings.documents == "Құжаттар") "Жүргізуші куәлігі" else "Права",
+                uri = licenseUri,
+                onAddClick = { licensePicker.launch("*/*") },
+                onViewClick = { viewDocument(licenseUri) },
+                onDeleteClick = { deleteDocument(KEY_LICENSE_URI) { licenseUri = null } }
+            )
+
+          
+            DocumentSection(
+                title = if (strings.documents == "Құжаттар") "Жүк туралы ақпарат" else "Информация о грузе",
+                uri = cargoUri,
+                onAddClick = { cargoPicker.launch("*/*") },
+                onViewClick = { viewDocument(cargoUri) },
+                onDeleteClick = { deleteDocument(KEY_CARGO_URI) { cargoUri = null } }
+            )
+
+          
+            DocumentSection(
+                title = if (strings.documents == "Құжаттар") "Жеке куәлік" else "Удостоверение личности",
+                uri = idUri,
+                onAddClick = { idPicker.launch("*/*") },
+                onViewClick = { viewDocument(idUri) },
+                onDeleteClick = { deleteDocument(KEY_ID_URI) { idUri = null } }
+            )
+        }
+
+        // Кнопка "Назад"
+        Button(
+            onClick = onBack,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .align(Alignment.BottomCenter),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF212020),
+                contentColor = Color.White
+            )
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_back),
+                    contentDescription = null,
+                    tint = Color.White
+                )
+                Text(strings.back, fontSize = 18.sp)
+            }
+        }
+    }
+}
